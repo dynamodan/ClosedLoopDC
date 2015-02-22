@@ -55,18 +55,21 @@ void setup() {
   pinMode(encoder0PinA, INPUT); 
   pinMode(encoder0PinB, INPUT);
   
+  pinMode(A0, INPUT);
+  pinMode(3, INPUT);
+  
   setPwmFrequency(M1, 1);
   
   
   attachInterrupt(0, doEncoderMotor0, CHANGE);  // encoder pin on interrupt 0 - pin 2
-  //attachInterrupt(1, countStep, RISING);  //on pin 3
+  attachInterrupt(1, countStep, RISING);  //on pin 3
   
-  Serial.begin (4800);
+  // Serial.begin (4800);
 } 
 
 void loop(){
     // interpret received data as an integer (no CR LR)
-    if(Serial.available()) target1=Serial.parseInt();
+    //if(Serial.available()) target1=Serial.parseInt();
 
     margin = abs(encoder0Pos - target1); // how far off is the encoder?
     rate = 1000000 / spd;  // clicks per second, or something like that
@@ -117,14 +120,14 @@ void loop(){
     pwmOut(output);
     
     // print encoder and target every second throgh the serial port 
-    if(millis() > messageMillis+4000 )  {
-        if(encoder0Pos == target1) { output = 0; }
-        Serial.print(encoder0Pos); Serial.print("->");
-        Serial.print(output); Serial.print("->");
-        Serial.println(rate);
-        messageMillis=millis();
-        if(target1 == 0) { target1 = 2000; } else { target1 = 0; }
-    }
+    //if(millis() > messageMillis+4000 )  {
+    //    if(encoder0Pos == target1) { output = 0; }
+    //    Serial.print(encoder0Pos); Serial.print("->");
+    //    Serial.print(output); Serial.print("->");
+    //    Serial.println(rate);
+    //    messageMillis=millis();
+    //    if(target1 == 0) { target1 = 2000; } else { target1 = 0; }
+    //}
 }
 
 void pwmOut(int out) {
@@ -198,7 +201,7 @@ void setPwmFrequency(int pin, int divisor) {
   }
 }
 
-//void countStep(){ // pin A0 represents direction
-//           if (PINC&B0000001) target1++;
-//            else target1--;
-//}
+void countStep(){ // pin A0 represents direction
+           if (PINC&B0000001) target1++;
+            else target1--;
+}
