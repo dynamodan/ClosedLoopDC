@@ -16,7 +16,7 @@
    Please note PID gains kp, ki, kd need to be tuned to each different setup. 
 */
 
-#include <PID_v1.h>
+#include <PinChangeInt.h>
 #define encoder0PinA  2 // PD2; 
 #define encoder0PinB  8  // PB0;
 #define M1            9  // using pin 9 and 10 allow us to do 31khz and not mess up any millis(), micros() or delay() funcs
@@ -24,14 +24,8 @@
 #define Qu1            A4
 #define Qu2            A5
 
-double kp=12,ki=2000,kd=0.06;
-// double kp=12,ki=2080,kd=0.14;
-// double kp=24,ki=4162,kd=0.28;
-// double kp=4,ki=40,kd=1;
-double input=80, output=0, setpoint=180;
+double output=0, setpoint=180;
 double margin = 0;
-
-PID myPID(&input, &output, &setpoint,kp,ki,kd, DIRECT);
 
 volatile long encoder0Pos = 0;
 
@@ -43,7 +37,7 @@ long rate = 0;
 long targetRate = 0;
 volatile long lastMicros;
 
-long target1=0;  // destination location at any moment
+long target=0;  // destination location at any moment
 
 volatile bool cw = false; // motor spin direction, needed to compute forward or braking
 bool dir = false;
@@ -60,7 +54,7 @@ void setup() {
   
   setPwmFrequency(M1, 1);
   
-  
+  PCintPort::attachInterrupt(encoder0PinB, doEncoderMotor0,CHANGE); // now with 4x resolution as we use the two edges of A & B pins
   attachInterrupt(0, doEncoderMotor0, CHANGE);  // encoder pin on interrupt 0 - pin 2
   attachInterrupt(1, countStep, RISING);  //on pin 3
   
@@ -69,9 +63,9 @@ void setup() {
 
 void loop(){
     // interpret received data as an integer (no CR LR)
-    //if(Serial.available()) target1=Serial.parseInt();
+    //if(Serial.available()) target=Serial.parseInt();
 
-    margin = abs(encoder0Pos - target1); // how far off is the encoder?
+    margin = abs(encoder0Pos - target); // how far off is the encoder?
     rate = 1000000 / spd;  // clicks per second, or something like that
  
     // every 50 millis, check if we've moved.  If not, then rate is zero.
@@ -79,12 +73,12 @@ void loop(){
     if(millis() > delayMillis + 50) {
       lastPos = encoder0Pos;
       delayMillis = millis();
-      // target1 -= 2;
+      // target -= 2;
     }
     
     // the farther off target we are, the faster we should try to get there
     targetRate = margin * 16;  // Proportional
-    if(targetRate > 300) { targetRate = 300; } // but we can only go x fast
+    if(targetRate > 600) { targetRate = 600; } // but we can only go x fast
     
     // we should only be a factor of y of the rate, depends how much resolution
     output = (targetRate - (rate / 16));
@@ -102,15 +96,15 @@ void loop(){
     if(output < -255) { output = -255; }
     
     // invert PWM output for main direction:
-    if(encoder0Pos < target1) {
+    if(encoder0Pos < target) {
       output = output * -1;
     }
     
     // invert PWM in overshoot condition:
     if(rate > 0) {
-      if(encoder0Pos < target1 && cw == false && output > 0) { // going away from target!!
+      if(encoder0Pos < target && cw == false && output > 0) { // going away from target!!
         output = output * -1;
-      } else if(encoder0Pos > target1 && cw == true && output < 0) { // going away from target!!
+      } else if(encoder0Pos > target && cw == true && output < 0) { // going away from target!!
         output = output * -1;
       }
     }
@@ -121,12 +115,12 @@ void loop(){
     
     // print encoder and target every second throgh the serial port 
     //if(millis() > messageMillis+4000 )  {
-    //    if(encoder0Pos == target1) { output = 0; }
+    //    if(encoder0Pos == target) { output = 0; }
     //    Serial.print(encoder0Pos); Serial.print("->");
     //    Serial.print(output); Serial.print("->");
     //    Serial.println(rate);
     //    messageMillis=millis();
-    //    if(target1 == 0) { target1 = 2000; } else { target1 = 0; }
+    //    if(target == 0) { target = 2000; } else { target = 0; }
     //}
 }
 
@@ -135,39 +129,18 @@ void pwmOut(int out) {
    else { analogWrite(M2,0); analogWrite(M1,abs(out)); }
   }
 
-
+// Quadrature Encoder Matrix
+const int QEM [16] = {0,-1,1,2,1,0,2,-1,-1,2,0,1,2,1,-1,0};
+static unsigned char newQ, oldQ;
 void doEncoderMotor0(){
-  if (((PIND&B0000100)>>2) == HIGH) {   // found a low-to-high on channel A; if(digitalRead(encoderPinA)==HIGH){.... read PB0
-     spd = micros() - lastMicros;
-     digitalWrite(Qu2, HIGH);
-    if ((PINB&B0000001) == LOW) {  // check channel B to see which way; if(digitalRead(encoderPinB)==LOW){.... read PB0
-      encoder0Pos-- ;         // CCW
-      cw = false;
-      digitalWrite(Qu1, LOW);
-    } 
-    else {
-      encoder0Pos++ ;         // CW
-      cw = true;
-      digitalWrite(Qu1, HIGH);
-    }
-  }
-  else                                        // found a high-to-low on channel A
-  { 
-    spd = micros() - lastMicros;
-    digitalWrite(Qu2, LOW);
-    if ((PINB&B0000001) == LOW) {   // check channel B to see which way; if(digitalRead(encoderPinB)==LOW){.... read PB0
-      digitalWrite(Qu1, LOW);
-      encoder0Pos++ ;          // CW
-      cw = true;
-    } 
-    else {
-      digitalWrite(Qu1, HIGH);
-      encoder0Pos-- ;          // CCW
-      cw = false;
-   }
-  }
+  spd = micros() - lastMicros;
+  oldQ = newQ;
+  newQ = (PINB & 1 )+ ((PIND & 4) >> 1);
+  char qChange = QEM [oldQ * 4 + newQ];
+  encoder0Pos+= qChange;
+  if(qChange < 0) cw = false;
+  if(qChange > 0) cw = true;
   lastMicros = micros();
- 
 }
 
 void setPwmFrequency(int pin, int divisor) {
@@ -201,7 +174,24 @@ void setPwmFrequency(int pin, int divisor) {
   }
 }
 
+static bool currentDir;
 void countStep(){ // pin A0 represents direction
-           if (PINC&B0000001) target1++;
-            else target1--;
+  bool dirPin = PINC&B0000001;
+  if (dirPin) {
+    target++;
+  } else {
+    target--;
+  }
+  
+  // an acceptible offset for compensating for PWM "stiction"
+  if(currentDir) {
+    if(!dirPin) {
+      target -= 8;
+    }
+  } else {
+    if(dirPin) {
+      target += 8;
+    }
+  }
+  currentDir = dirPin;
 }
