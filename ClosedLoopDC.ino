@@ -20,9 +20,9 @@
 #define encoder0PinA  2 // PD2; 
 #define encoder0PinB  8  // PB0;
 #define M1            9  // using pin 9 and 10 allow us to do 31khz and not mess up any millis(), micros() or delay() funcs
-#define M2            10  // motor's PWM outputs
-#define Qu1            A4
-#define Qu2            A5
+#define M2            10  // motor's high-side PWM outputs
+#define L1            5  // H-bridge low side
+#define L2            6  // H-bridge low side
 
 double output=0, setpoint=180;
 double margin = 0;
@@ -40,11 +40,11 @@ volatile long lastMicros;
 long target=0;  // destination location at any moment
 
 volatile bool cw = false; // motor spin direction, needed to compute forward or braking
-bool dir = false;
+volatile bool hPol = false; // polarity of the H bridge, for switching low sides on or off
 
 void setup() { 
-  pinMode(Qu1, OUTPUT);
-  pinMode(Qu2, OUTPUT);
+  pinMode(L1, OUTPUT);
+  pinMode(L2, OUTPUT);
   pinMode(2, INPUT);
   pinMode(encoder0PinA, INPUT); 
   pinMode(encoder0PinB, INPUT);
@@ -66,6 +66,9 @@ void loop(){
     //if(Serial.available()) target=Serial.parseInt();
 
     margin = abs(encoder0Pos - target); // how far off is the encoder?
+    margin -= 16;
+    if(margin < 0) { margin = 0; }
+    
     rate = 1000000 / spd;  // clicks per second, or something like that
  
     // every 50 millis, check if we've moved.  If not, then rate is zero.
@@ -84,8 +87,8 @@ void loop(){
     output = (targetRate - (rate / 16));
     
     // integrate an offset:
-    if(output > 0) { output += 64; }
-    if(output < 0) { output -= 64; }
+    if(output > 0) { output += 50; }
+    if(output < 0) { output -= 50; }
     
     // speed up, step on the gas!
     if(output > 255) {
@@ -125,9 +128,14 @@ void loop(){
 }
 
 void pwmOut(int out) {
-   if(out<0) { analogWrite(M1,0); analogWrite(M2,abs(out)); }
-   else { analogWrite(M2,0); analogWrite(M1,abs(out)); }
-  }
+   if(out<0) {
+     if(hPol) { hPol = false; analogWrite(M1, 0); analogWrite(M2, 0); digitalWrite(L1, 1); digitalWrite(L2, 0); }
+     analogWrite(M1,0); analogWrite(M2,abs(out));
+   } else {
+     if(!hPol) { hPol = true; analogWrite(M1, 0); analogWrite(M2, 0); digitalWrite(L1, 0); digitalWrite(L2, 1); }
+     analogWrite(M2,0); analogWrite(M1,abs(out));
+   }
+}
 
 // Quadrature Encoder Matrix
 const int QEM [16] = {0,-1,1,2,1,0,2,-1,-1,2,0,1,2,1,-1,0};
