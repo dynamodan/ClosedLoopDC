@@ -19,8 +19,8 @@
 #include <PinChangeInt.h>
 #define encoder0PinA  2 // PD2; 
 #define encoder0PinB  8  // PB0;
-#define M1            9  // using pin 9 and 10 allow us to do 31khz and not mess up any millis(), micros() or delay() funcs
-#define M2            10  // motor's high-side PWM outputs
+#define M1            9  // PWM output
+#define M2            10  // Sign output
 #define L1            5  // H-bridge low side
 #define L2            6  // H-bridge low side
 
@@ -43,11 +43,15 @@ volatile bool cw = false; // motor spin direction, needed to compute forward or 
 volatile bool hPol = false; // polarity of the H bridge, for switching low sides on or off
 
 void setup() { 
+  pinMode(M1, OUTPUT);
+  pinMode(M2, OUTPUT);
   pinMode(L1, OUTPUT);
   pinMode(L2, OUTPUT);
   pinMode(2, INPUT);
   pinMode(encoder0PinA, INPUT); 
   pinMode(encoder0PinB, INPUT);
+  digitalWrite(encoder0PinA, 1);
+  digitalWrite(encoder0PinB, 1); // weak pullup
   
   pinMode(A0, INPUT);
   pinMode(3, INPUT);
@@ -66,7 +70,7 @@ void loop(){
     //if(Serial.available()) target=Serial.parseInt();
 
     margin = abs(encoder0Pos - target); // how far off is the encoder?
-    margin -= 16;
+    margin -= 1;
     if(margin < 0) { margin = 0; }
     
     rate = 1000000 / spd;  // clicks per second, or something like that
@@ -87,8 +91,8 @@ void loop(){
     output = (targetRate - (rate / 16));
     
     // integrate an offset:
-    if(output > 0) { output += 50; }
-    if(output < 0) { output -= 50; }
+    if(output > 0) { output += 5; }
+    if(output < 0) { output -= 5; }
     
     // speed up, step on the gas!
     if(output > 255) {
@@ -111,10 +115,10 @@ void loop(){
         output = output * -1;
       }
     }
-    
+    if(margin == 0) { output = 0; }
     
     // write the PWM force value to the speed control:
-    pwmOut(output);
+    pwmOutSigned(output);
     
     // print encoder and target every second throgh the serial port 
     //if(millis() > messageMillis+4000 )  {
@@ -125,6 +129,16 @@ void loop(){
     //    messageMillis=millis();
     //    if(target == 0) { target = 2000; } else { target = 0; }
     //}
+}
+
+void pwmOutSigned(int out) {
+  if(out<0) {
+    analogWrite(M1, abs(out));
+    digitalWrite(M2, 0);
+  } else {
+    analogWrite(M1, out);
+    digitalWrite(M2, 1);
+  }
 }
 
 void pwmOut(int out) {
