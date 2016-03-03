@@ -84,11 +84,11 @@ void loop(){
     }
     
     // the farther off target we are, the faster we should try to get there
-    targetRate = margin * 16;  // Proportional
+    targetRate = margin * 2;  // Proportional
     if(targetRate > 6000) { targetRate = 6000; } // but we can only go x fast
     
     // we should only be a factor of y of the rate, depends how much resolution
-    output = (targetRate - (rate / 16));
+    output = (targetRate - (rate / 128));
     
     // integrate an offset:
     if(output > 0) { output += 5; }
