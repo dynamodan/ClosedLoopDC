@@ -58,8 +58,8 @@ void setup() {
   
   setPwmFrequency(M1, 1);
   
-  PCintPort::attachInterrupt(encoder0PinB, doEncoderMotor0,CHANGE); // now with 4x resolution as we use the two edges of A & B pins
-  attachInterrupt(0, doEncoderMotor0, CHANGE);  // encoder pin on interrupt 0 - pin 2
+  // PCintPort::attachInterrupt(encoder0PinB, doEncoderMotor0,CHANGE); // now with 4x resolution as we use the two edges of A & B pins
+  attachInterrupt(0, doHalfEncoderMotor0, CHANGE);  // encoder pin on interrupt 0 - pin 2
   attachInterrupt(1, countStep, RISING);  //on pin 3
   
   // Serial.begin (4800);
@@ -70,25 +70,24 @@ void loop(){
     //if(Serial.available()) target=Serial.parseInt();
 
     margin = abs(encoder0Pos - target); // how far off is the encoder?
-    margin -= 1;
     if(margin < 0) { margin = 0; }
     
     rate = 1000000 / spd;  // clicks per second, or something like that
  
     // every 50 millis, check if we've moved.  If not, then rate is zero.
-    if(lastPos == encoder0Pos) { rate = 0; }
-    if(millis() > delayMillis + 50) {
-      lastPos = encoder0Pos;
-      delayMillis = millis();
+    //if(lastPos == encoder0Pos) { rate = 0; }
+    //if(millis() > delayMillis + 50) {
+    //  lastPos = encoder0Pos;
+    //  delayMillis = millis();
       // target -= 2;
-    }
+    //}
     
     // the farther off target we are, the faster we should try to get there
-    targetRate = margin * 2;  // Proportional
-    if(targetRate > 6000) { targetRate = 6000; } // but we can only go x fast
+    targetRate = margin * 4;  // Proportional
+    if(targetRate > 3000) { targetRate = 3000; } // but we can only go x fast
     
     // we should only be a factor of y of the rate, depends how much resolution
-    output = (targetRate - (rate / 128));
+    output = (targetRate - (rate / 64));
     
     // integrate an offset:
     if(output > 0) { output += 5; }
@@ -149,6 +148,38 @@ void pwmOut(int out) {
      if(!hPol) { hPol = true; analogWrite(M1, 0); analogWrite(M2, 0); digitalWrite(L1, 0); digitalWrite(L2, 1); }
      analogWrite(M2,0); analogWrite(M1,abs(out));
    }
+}
+
+void doHalfEncoderMotor0(){
+  if (((PIND&B0000100)>>2) == HIGH) {   // found a low-to-high on channel A; if(digitalRead(encoderPinA)==HIGH){.... read PB0
+     spd = micros() - lastMicros;
+     //digitalWrite(Qu2, HIGH);
+    if ((PINB&B0000001) == LOW) {  // check channel B to see which way; if(digitalRead(encoderPinB)==LOW){.... read PB0
+      encoder0Pos++ ;         // CCW
+      cw = false;
+      //digitalWrite(Qu1, LOW);
+    } 
+    else {
+      encoder0Pos-- ;         // CW
+      cw = true;
+      //digitalWrite(Qu1, HIGH);
+    }
+  }
+  else                                        // found a high-to-low on channel A
+  { 
+    spd = micros() - lastMicros;
+    //digitalWrite(Qu2, LOW);
+    if ((PINB&B0000001) == LOW) {   // check channel B to see which way; if(digitalRead(encoderPinB)==LOW){.... read PB0
+      //digitalWrite(Qu1, LOW);
+      encoder0Pos-- ;          // CW
+      cw = true;
+    } 
+    else {
+      //digitalWrite(Qu1, HIGH);
+      encoder0Pos++ ;          // CCW
+      cw = false;
+   }
+  }
 }
 
 // Quadrature Encoder Matrix
