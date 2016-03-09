@@ -40,6 +40,8 @@ volatile long lastMicros;
 long target=0;  // destination location at any moment
 
 volatile bool cw = false; // motor spin direction, needed to compute forward or braking
+volatile bool braking = false;
+volatile bool plugging = false;
 volatile bool hPol = false; // polarity of the H bridge, for switching low sides on or off
 
 void setup() { 
@@ -69,7 +71,7 @@ void loop(){
     // interpret received data as an integer (no CR LR)
     //if(Serial.available()) target=Serial.parseInt();
 
-    margin = abs(encoder0Pos - target); // how far off is the encoder?
+    margin = abs(encoder0Pos - target); // - 10; // how far off is the encoder?
     if(margin < 0) { margin = 0; }
     
     rate = 1000000 / spd;  // clicks per second, or something like that
@@ -82,12 +84,16 @@ void loop(){
       // target -= 2;
     //}
     
-    // the farther off target we are, the faster we should try to get there
-    targetRate = margin * 4;  // Proportional
-    if(targetRate > 3000) { targetRate = 3000; } // but we can only go x fast
+    // The farther off target we are, the faster we should try to get there.
+    // In other words, this setting governs how quickly torque will build up the farther
+    // off target (or, say the margin) the encoder is
+    targetRate = margin * 4;
+    if(targetRate > 512) { targetRate = 512; } // but we can only go x fast
     
     // we should only be a factor of y of the rate, depends how much resolution
-    output = (targetRate - (rate / 64));
+    rate = rate / 64;
+    if(rate - 20 > targetRate) { braking = true; } else { braking = false; }
+    output = targetRate - rate;
     
     // integrate an offset:
     if(output > 0) { output += 5; }
@@ -107,13 +113,26 @@ void loop(){
     }
     
     // invert PWM in overshoot condition:
+    plugging = false;
     if(rate > 0) {
       if(encoder0Pos < target && cw == false && output > 0) { // going away from target!!
         output = output * -1;
+        plugging = true;
       } else if(encoder0Pos > target && cw == true && output < 0) { // going away from target!!
         output = output * -1;
+        plugging = true;
       }
     }
+    
+    if(braking) {
+      output = output * -1;
+    }
+    
+    else if(plugging == true && margin > 64) {
+      if(output > 0) { output = 255; }
+      else if(output < 0) { output = -255; }
+    }
+    
     if(margin == 0) { output = 0; }
     
     // write the PWM force value to the speed control:
@@ -180,6 +199,7 @@ void doHalfEncoderMotor0(){
       cw = false;
    }
   }
+  lastMicros = micros();
 }
 
 // Quadrature Encoder Matrix
