@@ -60,8 +60,8 @@ void setup() {
   
   setPwmFrequency(M1, 1);
   
-  // PCintPort::attachInterrupt(encoder0PinB, doEncoderMotor0,CHANGE); // now with 4x resolution as we use the two edges of A & B pins
-  attachInterrupt(0, doHalfEncoderMotor0, CHANGE);  // encoder pin on interrupt 0 - pin 2
+  PCintPort::attachInterrupt(encoder0PinB, doEncoderMotor0,CHANGE); // now with 4x resolution as we use the two edges of A & B pins
+  attachInterrupt(0, doEncoderMotor0, CHANGE);  // encoder pin on interrupt 0 - pin 2
   attachInterrupt(1, countStep, RISING);  //on pin 3
   
   // Serial.begin (4800);
@@ -71,7 +71,7 @@ void loop(){
     // interpret received data as an integer (no CR LR)
     //if(Serial.available()) target=Serial.parseInt();
 
-    margin = abs(encoder0Pos - target); // - 10; // how far off is the encoder?
+    margin = abs(encoder0Pos - target) - 5; // how far off is the encoder?
     if(margin < 0) { margin = 0; }
     
     rate = 1000000 / spd;  // clicks per second, or something like that
@@ -87,11 +87,11 @@ void loop(){
     // The farther off target we are, the faster we should try to get there.
     // In other words, this setting governs how quickly torque will build up the farther
     // off target (or, say the margin) the encoder is
-    targetRate = margin * 4;
+    targetRate = margin * 16;
     if(targetRate > 512) { targetRate = 512; } // but we can only go x fast
     
     // we should only be a factor of y of the rate, depends how much resolution
-    rate = rate / 64;
+    rate = rate / 16;
     if(rate - 20 > targetRate) { braking = true; } else { braking = false; }
     output = targetRate - rate;
     
