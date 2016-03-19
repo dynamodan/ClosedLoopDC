@@ -1,30 +1,50 @@
-
 /*
-   This program uses an Arduino for a closed-loop control of a DC-motor. 
-   Motor motion is detected by a quadrature encoder.
+
+   This program uses an Arduino for a closed-loop control of a DC-motor.
+   You may have gotten a forked version but the original by Dan Hartman is here:
+   https://github.com/dynamodan/ClosedLoopDC
+   
+   It was inspired by misan's dcservo.ino file which was inspired by ServoStrap,
+   but looks less and less like it all the time.  Credit for these go here:
+   
+   https://github.com/misan/dcservo/blob/master/dcservo.ino
+   https://github.com/danithebest91/ServoStrap
+   
+   specifically its PID stragegy is completely different (or non-existent).
+   
+   Motor motion is still detected by a quadrature encoder.
    Two inputs named STEP and DIR allow changing the target position.
-   Serial port prints current position and target position every second.
-   Serial input can be used to feed a new location for the servo (no CR LF).
    
    Pins used:
    Digital inputs 2 & 8 are connected to the two encoder signals (AB).
    Digital input 3 is the STEP input.
    Analog input 0 is the DIR input.
-   Digital outputs 5 & 6 control the PWM outputs for the motor (I am using half L298 here).
+   Digital outputs 9 and 10 are PWM and DIR outputs for a mosfet driver board
+   (I'm using the MD10C R3 H-bridge and MDD10A dual H-bridge from robotshop.com)
 
-
-   Please note PID gains kp, ki, kd need to be tuned to each different setup. 
+   Please note that you need to tune RMult, RDiv, PWMin, and DZone and possibly other
+   values to the "acoustics" of your particular machine with variations on encoder
+   resolution, motor gearing etc.  Its probably a good idea to read through and
+   attempt to understand what is happening.  In the setup() function there is also
+   a place to choose 4x or 2x quadrature encoder interrupt resolution.
+   
 */
 
 #include <PinChangeInt.h>
 #define encoder0PinA  2 // PD2; 
 #define encoder0PinB  8  // PB0;
-#define M1            9  // PWM output
-#define M2            10  // Sign output
-#define L1            5  // H-bridge low side
-#define L2            6  // H-bridge low side
+#define M1            9  // PWM output, this one gives 16KHz with an 8MHz crystal or the 8MHz internal clock
+#define M2            10  // DIR output
 
-double output=0, setpoint=180;
+#define SMax	512	// Speed Maximum, limit the target rate to this.  Never lower than 256, never higher than what your encoder can reliably drive the arduino's inputs
+#define RMult	16 	// Rate multiplier, less with higher resolution
+#define RDiv	16  // Rate divider, generally 256 / RMult.  Greater with higher resolution
+#define PWMin	5 	// where PWM starts, if greater than zero. Increase this if motors sit there squealing with not enough torque to move
+#define DZone 	5	// Dead Zone, the encoder can freely move this many clicks either direction before torque is called
+#define PMarg	64	// Plugging margin, any margin above this will always give 100% power in the opposite direction when plugging (resisting movement away from target)
+#define BLash	8	// Backlash compensation
+
+double output = 0;
 double margin = 0;
 
 volatile long encoder0Pos = 0;
@@ -36,23 +56,18 @@ volatile long spd = 0;
 long rate = 0;
 long targetRate = 0;
 volatile long lastMicros;
-
-long target=0;  // destination location at any moment
+volatile long target = 0;  // destination location at any moment
 
 volatile bool cw = false; // motor spin direction, needed to compute forward or braking
 volatile bool braking = false;
 volatile bool plugging = false;
-volatile bool hPol = false; // polarity of the H bridge, for switching low sides on or off
 
 void setup() { 
   pinMode(M1, OUTPUT);
   pinMode(M2, OUTPUT);
-  pinMode(L1, OUTPUT);
-  pinMode(L2, OUTPUT);
-  pinMode(2, INPUT);
   pinMode(encoder0PinA, INPUT); 
   pinMode(encoder0PinB, INPUT);
-  digitalWrite(encoder0PinA, 1);
+  digitalWrite(encoder0PinA, 1); // weak pullup (I add a 220 ohm pullup in some cases)
   digitalWrite(encoder0PinB, 1); // weak pullup
   
   pinMode(A0, INPUT);
@@ -60,18 +75,26 @@ void setup() {
   
   setPwmFrequency(M1, 1);
   
+  // reading the input from the encoder at 4x resolution: (comment this out if the 2x block below is in use)
   PCintPort::attachInterrupt(encoder0PinB, doEncoderMotor0,CHANGE); // now with 4x resolution as we use the two edges of A & B pins
   attachInterrupt(0, doEncoderMotor0, CHANGE);  // encoder pin on interrupt 0 - pin 2
+  
+  // // reading the input from the encoder at 2x resolution: (comment this out if the 4x block above is in use)
+  // use this if the encoder is extremely fine resolution, or has issues with speed too
+  // great for a given resolution and clock speed
+  // attachInterrupt(0, doHalfEncoderMotor0, CHANGE);  // encoder pin on interrupt 0 - pin 2
+  
+  // reading the input from GRBL:
   attachInterrupt(1, countStep, RISING);  //on pin 3
   
   // Serial.begin (4800);
 } 
 
-void loop(){
+void loop() {
     // interpret received data as an integer (no CR LR)
     //if(Serial.available()) target=Serial.parseInt();
 
-    margin = abs(encoder0Pos - target) - 5; // how far off is the encoder?
+    margin = abs(encoder0Pos - target) - DZone; // how far off is the encoder?
     if(margin < 0) { margin = 0; }
     
     rate = 1000000 / spd;  // clicks per second, or something like that
@@ -87,17 +110,17 @@ void loop(){
     // The farther off target we are, the faster we should try to get there.
     // In other words, this setting governs how quickly torque will build up the farther
     // off target (or, say the margin) the encoder is
-    targetRate = margin * 16;
-    if(targetRate > 512) { targetRate = 512; } // but we can only go x fast
+    targetRate = margin * RMult;
+    if(targetRate > SMax) { targetRate = SMax; } // but we can only go x fast
     
     // we should only be a factor of y of the rate, depends how much resolution
-    rate = rate / 16;
+    rate = rate / RDiv;
     if(rate - 20 > targetRate) { braking = true; } else { braking = false; }
     output = targetRate - rate;
     
     // integrate an offset:
-    if(output > 0) { output += 5; }
-    if(output < 0) { output -= 5; }
+    if(output > 0) { output += PWMin; }
+    if(output < 0) { output -= PWMin; }
     
     // speed up, step on the gas!
     if(output > 255) {
@@ -128,7 +151,7 @@ void loop(){
       output = output * -1;
     }
     
-    else if(plugging == true && margin > 64) {
+    else if(plugging == true && margin > PMarg) {
       if(output > 0) { output = 255; }
       else if(output < 0) { output = -255; }
     }
@@ -157,16 +180,6 @@ void pwmOutSigned(int out) {
     analogWrite(M1, out);
     digitalWrite(M2, 1);
   }
-}
-
-void pwmOut(int out) {
-   if(out<0) {
-     if(hPol) { hPol = false; analogWrite(M1, 0); analogWrite(M2, 0); digitalWrite(L1, 1); digitalWrite(L2, 0); }
-     analogWrite(M1,0); analogWrite(M2,abs(out));
-   } else {
-     if(!hPol) { hPol = true; analogWrite(M1, 0); analogWrite(M2, 0); digitalWrite(L1, 0); digitalWrite(L2, 1); }
-     analogWrite(M2,0); analogWrite(M1,abs(out));
-   }
 }
 
 void doHalfEncoderMotor0(){
@@ -256,14 +269,14 @@ void countStep(){ // pin A0 represents direction
     target--;
   }
   
-  // an acceptible offset for compensating for PWM "stiction"
+  // compensate for PWM "stiction", backlash, and such things:
   if(currentDir) {
     if(!dirPin) {
-      target -= 8;
+      target -= BLash;
     }
   } else {
     if(dirPin) {
-      target += 8;
+      target += BLash;
     }
   }
   currentDir = dirPin;
